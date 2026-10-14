@@ -8,9 +8,9 @@ BorderWise AI is a competition prototype demonstrating transaction intake, expla
 
 ## Live Demo
 
-- **Web Application:** [Open BorderWise AI](REPLACE_WITH_YOUR_RENDER_URL)
-- **API Documentation (Swagger UI):** [Explore the API](REPLACE_WITH_YOUR_RENDER_URL/docs)
-- **Health Check:** [Check API Status](REPLACE_WITH_YOUR_RENDER_URL/api/health)
+- **Live Application:** [BorderWise AI](https://borderwise-ai.onrender.com)
+- **API Documentation:** [Swagger UI](https://borderwise-ai.onrender.com/docs)
+- **Source Code:** [GitHub Repository](https://github.com/nusrat-ahmed/borderwise-ai)
 
 Replace `REPLACE_WITH_YOUR_RENDER_URL` with your actual Render service URL, such as `https://your-service-name.onrender.com`. Use the same base URL for all three links.
 
