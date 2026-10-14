@@ -1,3 +1,4 @@
+
 from __future__ import annotations
 
 import json
@@ -15,8 +16,10 @@ from fastapi.staticfiles import StaticFiles
 from .providers.demo import DemoPaymentProvider
 from .schemas import PaymentRequest
 
+
 ROOT = Path(__file__).resolve().parent.parent
 DB = Path(os.getenv("BORDERWISE_DB_PATH", ROOT / "borderwise_demo.sqlite3"))
+
 provider = DemoPaymentProvider()
 
 
@@ -28,9 +31,11 @@ def db() -> sqlite3.Connection:
 
 def init_db() -> None:
     DB.parent.mkdir(parents=True, exist_ok=True)
+
     with db() as connection:
         connection.execute(
-            """CREATE TABLE IF NOT EXISTS transactions(
+            """
+            CREATE TABLE IF NOT EXISTS transactions(
                 id TEXT PRIMARY KEY,
                 idem TEXT UNIQUE,
                 created TEXT,
@@ -38,17 +43,21 @@ def init_db() -> None:
                 risk TEXT,
                 provider TEXT,
                 status TEXT
-            )"""
+            )
+            """
         )
+
         connection.execute(
-            """CREATE TABLE IF NOT EXISTS audit(
+            """
+            CREATE TABLE IF NOT EXISTS audit(
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 created TEXT,
                 correlation TEXT,
                 event TEXT,
                 txid TEXT,
                 details TEXT
-            )"""
+            )
+            """
         )
 
 
@@ -68,8 +77,41 @@ app = FastAPI(
 
 @app.middleware("http")
 async def security_headers(request: Request, call_next):
-    correlation_id = request.headers.get("X-Correlation-ID") or str(uuid4())
+    correlation_id = (
+        request.headers.get("X-Correlation-ID") or str(uuid4())
+    )
+
     response = await call_next(request)
+
+    # Default policy: keep the app restricted to same-origin resources.
+    default_csp = (
+        "default-src 'self'; "
+        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self'; "
+        "img-src 'self' data:; "
+        "connect-src 'self'; "
+        "object-src 'none'; "
+        "base-uri 'self'; "
+        "frame-ancestors 'none'"
+    )
+
+    # Swagger UI loads its assets from jsDelivr and uses an inline
+    # initialization script. Apply the more permissive policy only
+    # to the documentation routes.
+    if request.url.path in {"/docs", "/docs/oauth2-redirect"}:
+        response.headers["Content-Security-Policy"] = (
+            "default-src 'self'; "
+            "style-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; "
+            "img-src 'self' data: https://fastapi.tiangolo.com; "
+            "connect-src 'self'; "
+            "object-src 'none'; "
+            "base-uri 'self'; "
+            "frame-ancestors 'none'"
+        )
+    else:
+        response.headers["Content-Security-Policy"] = default_csp
+
     response.headers.update(
         {
             "X-Correlation-ID": correlation_id,
@@ -77,13 +119,17 @@ async def security_headers(request: Request, call_next):
             "X-Frame-Options": "DENY",
             "Referrer-Policy": "no-referrer",
             "Cache-Control": "no-store",
-            "Content-Security-Policy": "default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'",
         }
     )
+
     return response
 
 
-app.mount("/static", StaticFiles(directory=str(ROOT / "frontend")), name="static")
+app.mount(
+    "/static",
+    StaticFiles(directory=str(ROOT / "frontend")),
+    name="static",
+)
 
 
 @app.get("/")
@@ -91,10 +137,18 @@ def home():
     return FileResponse(ROOT / "frontend" / "index.html")
 
 
-def audit(correlation_id: str, event: str, transaction_id: str | None, details: dict) -> None:
+def audit(
+    correlation_id: str,
+    event: str,
+    transaction_id: str | None,
+    details: dict,
+) -> None:
     with db() as connection:
         connection.execute(
-            "INSERT INTO audit(created,correlation,event,txid,details) VALUES(?,?,?,?,?)",
+            """
+            INSERT INTO audit(created, correlation, event, txid, details)
+            VALUES(?,?,?,?,?)
+            """,
             (
                 datetime.now(timezone.utc).isoformat(),
                 correlation_id,
@@ -106,38 +160,69 @@ def audit(correlation_id: str, event: str, transaction_id: str | None, details: 
 
 
 def assess_risk(payment: PaymentRequest) -> dict:
-    """Transparent demo rules. This is not a trained AI or production fraud model."""
+    """Transparent demo rules, not a trained AI or production fraud model."""
+
     score = 0
     reasons: list[str] = []
+
     amount = payment.amount
     recipient = payment.recipient_name.casefold().strip()
     purpose = payment.purpose.casefold().strip()
 
     if amount >= 5000:
         score += 35
-        reasons.append("Amount is high under the demo policy (AUD-equivalent threshold).")
+        reasons.append(
+            "Amount is high under the demo policy (AUD-equivalent threshold)."
+        )
     elif amount >= 1500:
         score += 15
-        reasons.append("Amount exceeds the demo review threshold.")
+        reasons.append(
+            "Amount exceeds the demo review threshold."
+        )
 
-    if recipient in {"unknown", "test mismatch", "unverified recipient"}:
+    if recipient in {
+        "unknown",
+        "test mismatch",
+        "unverified recipient",
+    }:
         score += 45
-        reasons.append("Recipient matches a demo unverified-recipient marker.")
+        reasons.append(
+            "Recipient matches a demo unverified-recipient marker."
+        )
 
-    if purpose not in {"tuition", "university fee", "education"}:
+    if purpose not in {
+        "tuition",
+        "university fee",
+        "education",
+    }:
         score += 10
-        reasons.append("Purpose is outside the configured education-payment examples.")
+        reasons.append(
+            "Purpose is outside the configured education-payment examples."
+        )
 
     if not reasons:
-        reasons.append("No configured demo rule was triggered.")
+        reasons.append(
+            "No configured demo rule was triggered."
+        )
 
     score = min(score, 100)
-    decision = "block_demo" if score >= 70 else "review" if score >= 30 else "allow_demo"
+
+    decision = (
+        "block_demo"
+        if score >= 70
+        else "review"
+        if score >= 30
+        else "allow_demo"
+    )
+
     return {
         "decision": decision,
         "score": score,
         "reasons": reasons,
-        "disclaimer": "Transparent demo rules only; not a real or trained fraud model.",
+        "disclaimer": (
+            "Transparent demo rules only; "
+            "not a real or trained fraud model."
+        ),
     }
 
 
@@ -154,7 +239,11 @@ def transaction_to_dict(row: sqlite3.Row) -> dict:
 
 @app.get("/api/health")
 def health():
-    return {"status": "ok", "mode": "simulation", "real_money_moved": False}
+    return {
+        "status": "ok",
+        "mode": "simulation",
+        "real_money_moved": False,
+    }
 
 
 @app.get("/api/demo-info")
@@ -170,31 +259,60 @@ def demo_info():
 
 @app.post("/api/risk/assess")
 def risk_assess(payment: PaymentRequest):
-    """Evaluate a sample payment without saving a transaction or calling a provider."""
-    return {"mode": "simulation", "risk": assess_risk(payment), "real_money_moved": False}
+    """Assess a sample payment without saving a transaction."""
+
+    return {
+        "mode": "simulation",
+        "risk": assess_risk(payment),
+        "real_money_moved": False,
+    }
 
 
 @app.post("/api/transactions/prepare", status_code=201)
 async def prepare(
     payment: PaymentRequest,
     request: Request,
-    idempotency_key: str = Header(..., alias="Idempotency-Key", min_length=8, max_length=100),
+    idempotency_key: str = Header(
+        ...,
+        alias="Idempotency-Key",
+        min_length=8,
+        max_length=100,
+    ),
 ):
     payload_json = payment.model_dump_json()
+
     with db() as connection:
-        old = connection.execute("SELECT * FROM transactions WHERE idem=?", (idempotency_key,)).fetchone()
+        old = connection.execute(
+            "SELECT * FROM transactions WHERE idem = ?",
+            (idempotency_key,),
+        ).fetchone()
+
     if old:
         if json.loads(old["payload"]) != payment.model_dump():
             raise HTTPException(
                 status_code=409,
-                detail="This Idempotency-Key was already used with a different payload. Use a new key for a new request.",
+                detail=(
+                    "This Idempotency-Key was already used with a "
+                    "different payload. Use a new key for a new request."
+                ),
             )
+
         return transaction_to_dict(old)
 
     risk = assess_risk(payment)
     transaction_id = "BW-" + uuid4().hex[:16].upper()
-    provider_result = await provider.prepare_payment(payment.model_dump(), idempotency_key)
-    status = "prepared_demo" if risk["decision"] == "allow_demo" else "needs_review"
+
+    provider_result = await provider.prepare_payment(
+        payment.model_dump(),
+        idempotency_key,
+    )
+
+    status = (
+        "prepared_demo"
+        if risk["decision"] == "allow_demo"
+        else "needs_review"
+    )
+
     created = datetime.now(timezone.utc).isoformat()
 
     try:
@@ -211,20 +329,34 @@ async def prepare(
                     status,
                 ),
             )
+
     except sqlite3.IntegrityError:
-        # A concurrent request may have claimed this idempotency key first.
+        # Handle a concurrent request using the same idempotency key.
         with db() as connection:
-            old = connection.execute("SELECT * FROM transactions WHERE idem=?", (idempotency_key,)).fetchone()
+            old = connection.execute(
+                "SELECT * FROM transactions WHERE idem = ?",
+                (idempotency_key,),
+            ).fetchone()
+
         if old and json.loads(old["payload"]) == payment.model_dump():
             return transaction_to_dict(old)
-        raise HTTPException(status_code=409, detail="Idempotency-Key conflict. Retry with a new key.")
+
+        raise HTTPException(
+            status_code=409,
+            detail="Idempotency-Key conflict. Retry with a new key.",
+        )
 
     audit(
         request.headers.get("X-Correlation-ID", "not-provided"),
         "TRANSACTION_PREPARED_DEMO",
         transaction_id,
-        {"risk_decision": risk["decision"], "risk_score": risk["score"], "status": status},
+        {
+            "risk_decision": risk["decision"],
+            "risk_score": risk["score"],
+            "status": status,
+        },
     )
+
     return {
         "id": transaction_id,
         "status": status,
@@ -238,14 +370,23 @@ async def prepare(
 @app.get("/api/transactions")
 def transactions():
     with db() as connection:
-        rows = connection.execute("SELECT * FROM transactions ORDER BY created DESC LIMIT 100").fetchall()
-    return {"items": [transaction_to_dict(row) for row in rows], "mode": "simulation"}
+        rows = connection.execute(
+            "SELECT * FROM transactions ORDER BY created DESC LIMIT 100"
+        ).fetchall()
+
+    return {
+        "items": [transaction_to_dict(row) for row in rows],
+        "mode": "simulation",
+    }
 
 
 @app.get("/api/audit")
 def get_audit():
     with db() as connection:
-        rows = connection.execute("SELECT * FROM audit ORDER BY id DESC LIMIT 100").fetchall()
+        rows = connection.execute(
+            "SELECT * FROM audit ORDER BY id DESC LIMIT 100"
+        ).fetchall()
+
     return {
         "items": [
             {
